@@ -20,6 +20,11 @@ from pathlib import Path
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 
+# ctypes.wintypes is a submodule and is NOT auto-loaded by `import ctypes`
+# in Python 3.13. Import it explicitly so ctypes.wintypes.HANDLE/DWORD work.
+if sys.platform == "win32":
+    import ctypes.wintypes  # noqa: F401
+
 # winreg только на Windows
 try:
     import winreg
@@ -378,11 +383,45 @@ def orig_poller_thread(cfg):
 # Windows Media Session (SMTC) — Now Playing
 # ---------------------------------------------------------------------------
 def smtc_thread():
-    if not ensure_pkg("winsdk"): return
+    # Try PyWinRT (winrt-*) first — works on Python 3.13.
+    # Fall back to legacy `winsdk` for older Python.
+    Manager = None
+    backend = None
+    try:
+        from winrt.windows.media.control import (  # type: ignore
+            GlobalSystemMediaTransportControlsSessionManager as Manager)
+        backend = "winrt"
+    except ImportError:
+        pass
+    if Manager is None:
+        if ensure_pkg("winrt-Windows.Media.Control",
+                      "winrt.windows.media.control"):
+            try:
+                from winrt.windows.media.control import (  # type: ignore
+                    GlobalSystemMediaTransportControlsSessionManager as Manager)
+                backend = "winrt"
+            except ImportError:
+                pass
+    if Manager is None:
+        try:
+            from winsdk.windows.media.control import (  # type: ignore
+                GlobalSystemMediaTransportControlsSessionManager as Manager)
+            backend = "winsdk"
+        except ImportError:
+            if ensure_pkg("winsdk"):
+                try:
+                    from winsdk.windows.media.control import (  # type: ignore
+                        GlobalSystemMediaTransportControlsSessionManager as Manager)
+                    backend = "winsdk"
+                except ImportError:
+                    pass
+    if Manager is None:
+        log.warning("[smtc] Neither PyWinRT (winrt-*) nor winsdk available — "
+                    "Now Playing disabled")
+        return
+
     try:
         import asyncio
-        from winsdk.windows.media.control import (  # type: ignore
-            GlobalSystemMediaTransportControlsSessionManager as Manager)
 
         async def _get():
             mgr = await Manager.request_async()
@@ -394,7 +433,7 @@ def smtc_thread():
                     "artist": props.artist or "",
                     "app": cur.source_app_user_model_id or ""}
 
-        log.info("[smtc] Windows media session active")
+        log.info("[smtc] Windows media session active (%s)", backend)
         while not _shutdown.is_set():
             try:
                 loop = asyncio.new_event_loop()
@@ -697,7 +736,7 @@ h1{color:#1db954;font-size:1.4rem;margin-bottom:2px}
      color:#555;margin-bottom:5px}
 .val{font-size:1rem;font-weight:600}
 .bar{height:5px;background:#222;border-radius:3px;overflow:hidden;margin-top:8px}
-.fill{height:100%;background:linear-gradient(90deg,#1db954,#7c3aed);border-radius:3px}
+.fill{height:100%%;background:linear-gradient(90deg,#1db954,#7c3aed);border-radius:3px}
 .opts{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
 .opt-btn{background:#222;border:1px solid #333;color:#888;
          padding:3px 10px;border-radius:6px;font-size:.74rem;text-decoration:none}
@@ -731,7 +770,7 @@ button,.sbtn{background:#1db954;border:none;color:#000;
 .slider-t{position:absolute;cursor:pointer;top:0;left:0;right:0;bottom:0;
           background:#333;border-radius:20px;transition:.2s}
 .slider-t:before{position:absolute;content:"";height:14px;width:14px;left:3px;bottom:3px;
-                 background:#888;border-radius:50%;transition:.2s}
+                 background:#888;border-radius:50%%;transition:.2s}
 input:checked + .slider-t{background:#1db954}
 input:checked + .slider-t:before{transform:translateX(16px);background:#000}
 .footer{font-size:.65rem;color:#2a2a2a;margin-top:14px}
