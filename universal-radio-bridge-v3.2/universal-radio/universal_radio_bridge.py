@@ -33,6 +33,35 @@ except ImportError:
     HAS_WINREG = False
 
 # ---------------------------------------------------------------------------
+# Silent subprocess helpers — без этого каждый tasklist/wmic/ipconfig вспышет
+# чёрное окно cmd. Передаём CREATE_NO_WINDOW + STARTF_USESHOWWINDOW=SW_HIDE
+# во все вызовы.
+# ---------------------------------------------------------------------------
+if sys.platform == "win32":
+    _CREATE_NO_WINDOW = 0x08000000
+    _SW_HIDE          = 0
+    _STARTF_USESHOWWINDOW = 1
+
+    def _silent_startupinfo():
+        si = subprocess.STARTUPINFO()
+        si.dwFlags    |= _STARTF_USESHOWWINDOW
+        si.wShowWindow = _SW_HIDE
+        return si
+else:
+    _CREATE_NO_WINDOW = 0
+    def _silent_startupinfo(): return None
+
+def _silent_kwargs():
+    return {"creationflags": _CREATE_NO_WINDOW,
+            "startupinfo":   _silent_startupinfo()}
+
+def run_silent(fn, *args, **kw):
+    """Wrap subprocess.* to suppress the console flash on Windows."""
+    kw.setdefault("creationflags", _CREATE_NO_WINDOW)
+    kw.setdefault("startupinfo",   _silent_startupinfo())
+    return fn(*args, **kw)
+
+# ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
 BASE      = Path(__file__).parent
@@ -228,7 +257,7 @@ def get_local_ip():
     if _forced_ip: return _forced_ip
     ips = []
     try:
-        out = subprocess.check_output(
+        out = run_silent(subprocess.check_output,
             ["ipconfig"], encoding="cp866", errors="replace", timeout=3)
         for m in re.finditer(r"IPv4[^:]*:\s*([\d.]+)", out):
             ip = m.group(1).strip()
@@ -248,9 +277,9 @@ def ensure_pkg(pkg, import_as=None):
     except ImportError: pass
     log.info("pip install %s...", pkg)
     try:
-        subprocess.check_call([sys.executable, "-m", "pip", "install",
-                               pkg, "--quiet"],
-                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        run_silent(subprocess.check_call,
+                   [sys.executable, "-m", "pip", "install", pkg, "--quiet"],
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         return True
     except Exception as e:
         log.error("pip install %s failed: %s", pkg, e)
@@ -576,7 +605,7 @@ def _is_game_running():
     """Detect forzahorizon6.exe using multiple methods."""
     # Method 1: tasklist (works for most installs)
     try:
-        out = subprocess.check_output(
+        out = run_silent(subprocess.check_output,
             ["tasklist", "/fi", "imagename eq forzahorizon6.exe",
              "/fo", "csv", "/nh"],
             encoding="cp866", errors="replace", timeout=3)
@@ -586,7 +615,7 @@ def _is_game_running():
         pass
     # Method 2: wmic (more reliable for MS Store apps)
     try:
-        out = subprocess.check_output(
+        out = run_silent(subprocess.check_output,
             ["wmic", "process", "where",
              "name='forzahorizon6.exe'", "get", "name"],
             encoding="cp866", errors="replace", timeout=3)
