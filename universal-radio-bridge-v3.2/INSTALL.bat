@@ -32,32 +32,62 @@ for %%D in (C D E F G H) do (
 if "%GAME_DATA_DIR%"=="" set "GAME_DATA_DIR=%GAME_EXE_DIR%"
 echo  [OK] Game data: %GAME_DATA_DIR%
 
-:: --- Find Python ---
+:: --- Find Python (always resolve to an absolute pythonw.exe path so the
+::     proxy DLL can spawn it via CreateProcess without relying on PATH) ---
 set "PYTHON_EXE="
-py --version > nul 2>&1
-if not errorlevel 1 ( set "PYTHON_EXE=py" & goto :py_ok )
-python --version > nul 2>&1
-if not errorlevel 1 ( set "PYTHON_EXE=python" & goto :py_ok )
-python3 --version > nul 2>&1
-if not errorlevel 1 ( set "PYTHON_EXE=python3" & goto :py_ok )
-for %%D in (C D E) do for %%V in (313 312 311 310) do (
-    if exist "%%D:\Python%%V\pythonw.exe" ( set "PYTHON_EXE=%%D:\Python%%V\pythonw.exe" & goto :py_ok )
-)
-for %%V in (3.13 3.12 3.11 3.10) do (
-    if exist "%LOCALAPPDATA%\Programs\Python\Python%%V\pythonw.exe" (
+:: Prefer per-user installs first (CPython 3.13/3.12/...)
+for %%V in (313 312 311 310) do (
+    if not defined PYTHON_EXE if exist "%LOCALAPPDATA%\Programs\Python\Python%%V\pythonw.exe" (
         set "PYTHON_EXE=%LOCALAPPDATA%\Programs\Python\Python%%V\pythonw.exe"
-        goto :py_ok
     )
 )
-echo  [ERROR] Python not found. Get it from https://python.org
-pause & exit /b 1
+:: System-wide installs C:\PythonXYZ, D:\PythonXYZ, ...
+if not defined PYTHON_EXE for %%D in (C D E) do for %%V in (313 312 311 310) do (
+    if not defined PYTHON_EXE if exist "%%D:\Python%%V\pythonw.exe" (
+        set "PYTHON_EXE=%%D:\Python%%V\pythonw.exe"
+    )
+)
+:: As a last resort, resolve the `py` launcher to a real interpreter path
+if not defined PYTHON_EXE (
+    py --version > nul 2>&1
+    if not errorlevel 1 (
+        for /f "usebackq tokens=*" %%P in (`py -c "import sys,os;print(os.path.join(os.path.dirname(sys.executable),'pythonw.exe'))" 2^>nul`) do (
+            if exist "%%P" set "PYTHON_EXE=%%P"
+        )
+        if not defined PYTHON_EXE (
+            for /f "usebackq tokens=*" %%P in (`py -c "import sys;print(sys.executable)" 2^>nul`) do (
+                if exist "%%P" set "PYTHON_EXE=%%P"
+            )
+        )
+    )
+)
+:: Fall back to plain `python`/`python3` on PATH
+if not defined PYTHON_EXE (
+    for %%C in (python.exe python3.exe) do (
+        if not defined PYTHON_EXE for /f "tokens=*" %%P in ('where %%C 2^>nul') do (
+            if not defined PYTHON_EXE if exist "%%P" set "PYTHON_EXE=%%P"
+        )
+    )
+)
+if not defined PYTHON_EXE (
+    echo  [ERROR] Python not found. Get it from https://python.org
+    pause & exit /b 1
+)
 :py_ok
 for /f "tokens=*" %%V in ('"%PYTHON_EXE%" --version 2^>^&1') do set "PYVER=%%V"
 echo  [OK] %PYVER% at %PYTHON_EXE%
 
 :: --- Install Python deps ---
+:: Python 3.13 no longer supports `winsdk`; use PyWinRT (winrt-*) instead.
+:: We install both — pip will skip whichever isn't compatible.
 echo  [*] Installing dependencies...
-"%PYTHON_EXE%" -m pip install pyaudiowpatch pycaw comtypes winsdk --quiet 2>nul
+"%PYTHON_EXE%" -m pip install --upgrade pip --quiet 2>nul
+"%PYTHON_EXE%" -m pip install pyaudiowpatch pycaw comtypes --quiet 2>nul
+"%PYTHON_EXE%" -m pip install winrt-runtime "winrt-Windows.Media.Control" "winrt-Windows.Foundation" "winrt-Windows.Foundation.Collections" --quiet 2>nul
+if errorlevel 1 (
+    echo  [!] PyWinRT install failed, falling back to legacy winsdk
+    "%PYTHON_EXE%" -m pip install winsdk --quiet 2>nul
+)
 echo  [OK] Dependencies done
 
 :: --- Check VB-Cable ---
