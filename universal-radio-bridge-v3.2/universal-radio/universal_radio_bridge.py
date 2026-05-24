@@ -676,15 +676,32 @@ def build_dashboard(cfg):
     ip    = get_local_ip()
     pct   = max(0.0, min(100.0, (s["peak_db"] + 60.0) / 60.0 * 100.0))
 
-    # Game state
+    # Game state — proc detection beats orig-mod polling, so if the game
+    # process is alive we say so even when port 8103 hasn't been polled yet.
     if not s.get("game_running"):
         game_state = "&#x23F9; Game not running"
     elif audio.get("r10_active"):
         game_state = "&#x2705; Radio active"
     elif orig:
-        game_state = "&#x1F3AE; Game running — switch to Spotify Radio station"
+        game_state = "&#x1F3AE; Game running &mdash; switch to Spotify Radio station"
     else:
-        game_state = "&#x1F504; Waiting for radio mod (port 8103)"
+        game_state = "&#x1F3AE; Game running &mdash; orig mod loading&hellip;"
+
+    # Audio path — what is actually carrying sound to FMOD right now.
+    # The internal urb-pcm named pipe is reserved for a future custom
+    # FMOD hook; until that ships, the orig mod's Spotify Connect path
+    # is what drives in-game audio.  Showing "Waiting for game" here was
+    # misleading because the pipe will simply never connect on its own.
+    if s["pipe_clients"] > 0:
+        audio_path = "&#x1F50C; FMOD pipe (%d)" % s["pipe_clients"]
+    elif audio.get("r10_active"):
+        audio_path = "&#x1F4FB; Spotify Connect (orig mod)"
+    elif s["peak_db"] > -55:
+        audio_path = "&#x1F39A; Capturing %.1f dB" % s["peak_db"]
+    elif s["vbcable_ok"]:
+        audio_path = "&#x1F507; Idle (no audio on VB-Cable)"
+    else:
+        audio_path = "&#x274C; VB-Cable not installed"
 
     # Options from orig mod or our config
     menu_pb = opts_orig.get("menuPlayback",        cfg.get("menuPlayback",        "pause"))
@@ -827,8 +844,8 @@ input:checked + .slider-t:before{transform:translateX(16px);background:#000}
 <div class="g2">
 <div class="card"><div class="lbl">Signal %(db).1f dB</div>
 <div class="bar"><div class="fill" style="width:%(pct).1f%%"></div></div></div>
-<div class="card"><div class="lbl">FMOD Pipe</div>
-<div class="val">%(pipe)s</div></div>
+<div class="card"><div class="lbl">Audio Path</div>
+<div class="val" style="font-size:.88rem">%(audio_path)s</div></div>
 </div>
 
 <div class="card">
@@ -898,8 +915,7 @@ Auto-refresh 3s
         "vbc": vbc, "game_state": game_state,
         "t_title": t_title, "t_artist": t_artist, "t_app": t_app,
         "db": s["peak_db"], "pct": pct,
-        "pipe": ("%d connected" % s["pipe_clients"]
-                 if s["pipe_clients"] else "Waiting for game"),
+        "audio_path": audio_path,
         "sess_rows": sess_rows,
         "pause_a": ab(menu_pb=="pause"),    "cont_a": ab(menu_pb=="continue"),
         "rs_a": ab(race_st=="restart"),     "rn_a": ab(race_st=="next"),
